@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Gesture Controlled Advanced 3D Particle System</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: sans-serif;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 6px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info">
+        ✋ Open hand: expand<br>
+        ✊ Fist: contract<br>
+        👍 Thumb up: change color<br>
+        ✌ Two fingers: switch shape<br>
+        🤏 Pinch: toggle gravity<br>
+        🌀 Draw circle: orbit + shock ring
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        // -------------------- Three.js Setup --------------------
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 100;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        // Strong color output
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.NoToneMapping;
+        renderer.setPixelRatio(window.devicePixelRatio);
+
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // -------------------- Particle System --------------------
+        let particles, geometry, material;
+        let velocities = [];
+        let currentTemplate = 0;
+        let expansion = 1.0;
+        let hue = 0.0;
+        let gravityEnabled = false;
+
+        const handTarget = new THREE.Vector3(0, 0, 0);
+
+        // Ring system state
+        let fingerTrail = [];
+        let ringMode = false;
+        let shockMode = false;
+        let ringRadius = 20;
+
+        const TEMPLATES = [
+            heartTemplate,
+            flowerTemplate,
+            saturnTemplate,
+            fireworksTemplate,
+            spiralTemplate,
+            textTemplate,
+            butterflyTemplate
+        ];
+        function createCircleTexture() {
+            const size = 64;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+
+            const ctx = canvas.getContext('2d');
+            const center = size / 2;
+
+            ctx.clearRect(0, 0, size, size);
+            ctx.beginPath();
+            ctx.arc(center, center, center - 2, 0, Math.PI * 2);
+            ctx.closePath();
+
+            const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        function createParticles(templateFn) {
+            if (particles) scene.remove(particles);
+
+            geometry = new THREE.BufferGeometry();
+            const points = templateFn(2000);
+
+            const positions = new Float32Array(points.length * 3);
+            velocities = [];
+
+            for (let i = 0; i < points.length; i++) {
+                positions[i * 3] = points[i].x;
+                positions[i * 3 + 1] = points[i].y;
+                positions[i * 3 + 2] = points[i].z;
+
+                velocities.push(new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2
+                ));
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+            material = new THREE.PointsMaterial({
+                size: 2.5,
+                color: new THREE.Color().setHSL(hue / 360, 1.0, 0.65),
+
+                map: createCircleTexture(),
+                transparent: true,
+                alphaTest: 0.05,
+
+                blending: THREE.AdditiveBlending,   // 🔥 THIS MAKES IT GLOW
+                depthWrite: false
+            });
+
+
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+        }
+
+        // -------------------- Templates --------------------
+        function heartTemplate(n) {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const t = Math.random() * Math.PI * 2;
+                const r = Math.random();
+                const x = 16 * Math.pow(Math.sin(t), 3) * r;
+                const y = (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * r;
+                pts.push({ x, y, z: (Math.random() - 0.5) * 10 });
+            }
+            return pts;
+        }
+
+        function flowerTemplate(n) {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const a = Math.random() * Math.PI * 2;
+                const r = Math.sin(5 * a) * 25 * Math.random();
+                pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, z: (Math.random() - 0.5) * 15 });
+            }
+            return pts;
+        }
+
+        function saturnTemplate(n) {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const ring = Math.random() * 30 + 20;
+                const a = Math.random() * Math.PI * 2;
+                pts.push({ x: Math.cos(a) * ring, y: (Math.random() - 0.5) * 3, z: Math.sin(a) * ring });
+            }
+            return pts;
+        }
+
+        function fireworksTemplate(n) {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const r = Math.random() * 35;
+                pts.push({ x: r * Math.sin(phi) * Math.cos(theta), y: r * Math.sin(phi) * Math.sin(theta), z: r * Math.cos(phi) });
+            }
+            return pts;
+        }
+
+        function spiralTemplate(n) {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const t = i / n * 20 * Math.PI;
+                const r = i / n * 40;
+                pts.push({ x: Math.cos(t) * r, y: Math.sin(t) * r, z: (i / n - 0.5) * 40 });
+            }
+            return pts;
+        }
+
+        function textTemplate(n) {
+            const pts = [];
+            const text = "SPARSH";
+            for (let i = 0; i < n; i++) {
+                const idx = i % text.length;
+                const angle = (i / n) * Math.PI * 2;
+                const r = 30;
+                pts.push({ x: Math.cos(angle) * r + idx * 3, y: Math.sin(angle) * r, z: (Math.random() - 0.5) * 10 });
+            }
+            return pts;
+        }
+
+        function butterflyTemplate(n) {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const t = Math.random() * Math.PI * 2;
+                const r = Math.sin(t) * 30;
+                pts.push({ x: Math.cos(t) * r, y: Math.sin(t) * r * 0.6, z: (Math.random() - 0.5) * 15 });
+            }
+            return pts;
+        }
+
+        createParticles(TEMPLATES[currentTemplate]);
+
+        // -------------------- Gesture Control --------------------
+        const video = document.createElement('video');
+        video.style.display = 'none';
+        document.body.appendChild(video);
+
+        const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+
+        hands.onResults(results => {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
+
+            const lm = results.multiHandLandmarks[0];
+            const wrist = lm[0];
+            const indexTip = lm[8];
+            const middleTip = lm[12];
+            const thumbTip = lm[4];
+
+            // Map hand to 3D target
+            handTarget.set((indexTip.x - 0.5) * 100, -(indexTip.y - 0.5) * 100, 0);
+
+            const distIndex = Math.hypot(indexTip.x - wrist.x, indexTip.y - wrist.y);
+            const distMiddle = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y);
+
+            // Expand
+            if (distIndex > 0.25 && distMiddle > 0.25) expansion += 0.02;
+
+            // Contract
+            if (distIndex < 0.15 && distMiddle < 0.15) expansion = Math.max(0.5, expansion - 0.02);
+
+            // Color
+            if (thumbTip.y < indexTip.y) {
+                hue = (hue + 2) % 360;
+                material.color.setHSL(hue / 360, 1.0, 0.65);
+            }
+
+            // Switch template
+            if (Math.abs(indexTip.x - middleTip.x) > 0.12 && distIndex > 0.25) {
+                currentTemplate = (currentTemplate + 1) % TEMPLATES.length;
+                createParticles(TEMPLATES[currentTemplate]);
+            }
+
+            // Pinch = toggle gravity
+            const pinch = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+            if (pinch < 0.05) gravityEnabled = !gravityEnabled;
+
+            // Circular finger motion detection for ring
+            fingerTrail.push({ x: indexTip.x, y: indexTip.y });
+            if (fingerTrail.length > 25) fingerTrail.shift();
+
+            if (fingerTrail.length === 25) {
+                let cx = 0, cy = 0;
+                for (const p of fingerTrail) { cx += p.x; cy += p.y; }
+                cx /= fingerTrail.length;
+                cy /= fingerTrail.length;
+
+                let variance = 0;
+                for (const p of fingerTrail) {
+                    const d = Math.hypot(p.x - cx, p.y - cy);
+                    variance += Math.abs(d - 0.05);
+                }
+
+                if (variance < 0.05) {
+                    ringMode = true;
+                    shockMode = true;
+                }
+            }
+        });
+
+        const cameraUtils = new Camera(video, {
+            onFrame: async () => { await hands.send({ image: video }); },
+            width: 640, height: 480
+        });
+
+        cameraUtils.start();
+
+        // -------------------- Ring Physics --------------------
+        function applyRingAroundFinger() {
+            const pos = geometry.attributes.position.array;
+
+            for (let i = 0; i < velocities.length; i++) {
+                const angle = (i / velocities.length) * Math.PI * 2;
+                const x = handTarget.x + Math.cos(angle) * ringRadius;
+                const y = handTarget.y + Math.sin(angle) * ringRadius;
+                const z = Math.sin(angle * 3) * 5;
+
+                velocities[i].set(
+                    (x - pos[i * 3]) * 0.02,
+                    (y - pos[i * 3 + 1]) * 0.02,
+                    (z - pos[i * 3 + 2]) * 0.02
+                );
+            }
+        }
+
+        function applyShockRing() {
+            const pos = geometry.attributes.position.array;
+
+            ringRadius += 0.5;
+            if (ringRadius > 80) ringRadius = 20;
+
+            for (let i = 0; i < velocities.length; i++) {
+                const dx = pos[i * 3] - handTarget.x;
+                const dy = pos[i * 3 + 1] - handTarget.y;
+
+                const dist = Math.sqrt(dx * dx + dy * dy) + 0.01;
+                const force = 0.08 / dist;
+
+                velocities[i].x += dx * force;
+                velocities[i].y += dy * force;
+            }
+        }
+
+        // -------------------- Physics + Animation --------------------
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (particles) {
+                const pos = geometry.attributes.position.array;
+
+                // Apply ring effects once per frame
+                if (ringMode) applyRingAroundFinger();
+                if (shockMode) applyShockRing();
+
+                for (let i = 0; i < velocities.length; i++) {
+                    const ix = i * 3;
+
+                    if (gravityEnabled) {
+                        velocities[i].y -= 0.001;
+
+                        const p = new THREE.Vector3(pos[ix], pos[ix + 1], pos[ix + 2]);
+                        const dir = handTarget.clone().sub(p).multiplyScalar(0.0005);
+                        velocities[i].add(dir);
+                        // Soft pull back toward center (prevents losing particles)
+                        const centerForce = p.clone().multiplyScalar(-0.0003);
+                        velocities[i].add(centerForce);
+
+                    }
+
+                    velocities[i].multiplyScalar(0.99);
+                    // Clamp max speed (prevents shooting away)
+                    velocities[i].clampLength(0, 2.0);
+
+
+                    pos[ix] += velocities[i].x;
+                    pos[ix + 1] += velocities[i].y;
+                    pos[ix + 2] += velocities[i].z;
+                    // Invisible bounds (keeps particles in scene)
+                    const limit = 120;
+
+                    if (pos[ix] > limit || pos[ix] < -limit) velocities[i].x *= -0.6;
+                    if (pos[ix + 1] > limit || pos[ix + 1] < -limit) velocities[i].y *= -0.6;
+                    if (pos[ix + 2] > limit || pos[ix + 2] < -limit) velocities[i].z *= -0.6;
+
+                }
+
+                geometry.attributes.position.needsUpdate = true;
+
+                particles.rotation.y += 0.002;
+                particles.scale.set(expansion, expansion, expansion);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+
+</html>
